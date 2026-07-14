@@ -36,7 +36,7 @@ python3 -m pip install -U \
   setuptools
 sudo apt install python3-colcon-common-extensions -y
 sudo git clone https://github.com/paroj/xpad.git /usr/src/xpad-0.4
-sudo dkms install -m xpad -v 0.4
+sudo dkms install -m xpad -v 0.4 -y
 sudo echo 'KERNEL=="ttyACM[0-9]*", ACTION=="add", ATTRS{idVendor}=="15d1", MODE="0666", GROUP="dialout", SYMLINK+="sensors/hokuyo"' | sudo tee /etc/udev/rules.d/99-hokuyo.rules
 sudo echo 'KERNEL=="ttyACM[0-9]*", ACTION=="add", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", MODE="0666", GROUP="dialout", SYMLINK+="sensors/vesc"' | sudo tee /etc/udev/rules.d/99-vesc.rules
 sudo echo 'KERNEL=="js[0-9]*", ACTION=="add", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c219", SYMLINK+="input/joypad-f710"' | sudo tee /etc/udev/rules.d/99-joypad-f710.rules
@@ -49,7 +49,7 @@ git submodule update --init --recursive --remote
 cd $HOME/f1tenth_ws
 rosdep update --include-eol --rosdistro=humble
 rosdep install --include-eol --from-paths src -i -y --rosdistro=humble
-sudo apt install ros-humble-asio-cmake-module
+sudo apt install ros-humble-asio-cmake-module -y
 colcon build
 echo "alias f110='cd \$HOME/f1tenth_ws && source install/setup.zsh && ros2 launch f1tenth_stack bringup_launch.py'" >> ~/.zshrc
 curl -sSL https://file.garden/acKoL5EeCA54DUAN/vesc_tool_7.00 -o $HOME/vesctool
@@ -58,7 +58,7 @@ sudo apt purge -y 'libreoffice*'
 sudo apt purge -y thunderbird rhythmbox cheese transmission-gtk \
   aisleriot gnome-mahjongg gnome-mines gnome-sudoku gnome-todo \
   shotwell remmina
-sudo snap remove firefox
-sudo apt install chromium-browser
+sudo snap remove firefox -y
+sudo apt install chromium-browser -y
 sudo apt autoremove -y
 sudo reboot
