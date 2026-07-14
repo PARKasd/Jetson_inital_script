@@ -15,18 +15,19 @@ trap 'kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true' EXIT
 PLUGINS_DIR="$HOME/.oh-my-zsh/plugins"
 
 ### 1. base packages #############################################
-sudo apt purge -y 'libreoffice*'
-sudo apt purge -y thunderbird rhythmbox cheese transmission-gtk \
-  aisleriot gnome-mahjongg gnome-mines gnome-sudoku gnome-todo \
-  shotwell remmina
-sudo snap remove firefox           # snap remove 엔 -y 없음
-sudo apt install -y chromium-browser
-sudo apt autoremove -y
 sudo apt update && sudo apt upgrade -y
 sudo apt install -y \
   zsh curl nano git dkms python-is-python3 terminator \
-  locales software-properties-common \
-  linux-headers-"$(uname -r)"          # dkms 빌드에 필요
+  locales software-properties-common
+
+# kernel headers (Jetson/Tegra 대응)
+# Tegra 커널 헤더는 일반 ubuntu 저장소에 없음(=linux-headers-*-tegra). 보통 L4T에 이미 있음.
+# 있으면 스킵, 없으면 L4T 헤더 시도, 그래도 없으면 경고만 (xpad DKMS optional)
+if [ ! -d "/lib/modules/$(uname -r)/build" ]; then
+  sudo apt install -y nvidia-l4t-kernel-headers 2>/dev/null \
+    || sudo apt install -y "linux-headers-$(uname -r)" 2>/dev/null \
+    || echo "WARN: 커널 헤더 못 찾음 -> xpad DKMS 스킵될 수 있음"
+fi
 
 ### 2. oh-my-zsh (unattended) ####################################
 # RUNZSH=no  -> 설치 끝에 exec zsh 안 함 (스크립트 안 멈춤)
@@ -78,11 +79,16 @@ python3 -m pip install -U \
   pytest-repeat pytest-rerunfailures pytest setuptools
 sudo apt install -y python3-colcon-common-extensions
 
-### 7. xpad (Xbox 패드) DKMS #####################################
-if [ ! -d /usr/src/xpad-0.4 ]; then
-  sudo git clone https://github.com/paroj/xpad.git /usr/src/xpad-0.4
+### 7. xpad (F710 XInput / Xbox 패드) DKMS #######################
+# 헤더 없으면 빌드 실패하므로 non-fatal 처리 (|| true)
+if [ -d "/lib/modules/$(uname -r)/build" ]; then
+  if [ ! -d /usr/src/xpad-0.4 ]; then
+    sudo git clone https://github.com/paroj/xpad.git /usr/src/xpad-0.4
+  fi
+  sudo dkms install -m xpad -v 0.4 || echo "WARN: xpad DKMS 실패 -> 헤더/커널 확인 필요"
+else
+  echo "WARN: 커널 헤더 없음 -> xpad DKMS 스킵"
 fi
-sudo dkms install -m xpad -v 0.4        # -y 플래그 없음
 
 ### 8. udev rules (Hokuyo / VESC / F710) #########################
 # 'sudo echo' 은 무의미(리다이렉트는 유저 셸에서 실행) -> tee 만 sudo
@@ -119,7 +125,13 @@ curl -fsSL https://file.garden/acKoL5EeCA54DUAN/vesc_tool_7.00 -o "$HOME/vesctoo
 chmod +x "$HOME/vesctool"
 
 ### 11. bloat 제거 ###############################################
-
+sudo apt purge -y 'libreoffice*'
+sudo apt purge -y thunderbird rhythmbox cheese transmission-gtk \
+  aisleriot gnome-mahjongg gnome-mines gnome-sudoku gnome-todo \
+  shotwell remmina
+sudo snap remove firefox           # snap remove 엔 -y 없음
+sudo apt install -y chromium-browser
+sudo apt autoremove -y
 
 ### 12. default shell -> zsh (non-interactive) ##################
 sudo chsh -s "$(which zsh)" "$USER"
