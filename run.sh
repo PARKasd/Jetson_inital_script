@@ -42,10 +42,15 @@ fi
 
 ### 2. oh-my-zsh (unattended) ####################################
 # RUNZSH=no  -> 설치 끝에 exec zsh 안 함 (스크립트 안 멈춤)
-# CHSH=no    -> 여기서 default shell 안 바꿈 (아래서 non-interactive로 처리)
-RUNZSH=no CHSH=no sh -c \
-  "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" \
-  "" --unattended
+# CHSH=no    -> 여기서 default shell 안 바꿈 (아래 3.5에서 처리)
+# 이미 설치돼있으면 인스톨러가 non-zero 종료 -> set -e로 죽으므로 스킵
+if [ ! -d "$HOME/.oh-my-zsh" ]; then
+  RUNZSH=no CHSH=no sh -c \
+    "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" \
+    "" --unattended
+else
+  echo "oh-my-zsh 이미 설치됨 -> 스킵"
+fi
 
 ### 3. zsh plugins ###############################################
 # 재실행 대비: 이미 있으면 clone 스킵 (git clone은 디렉토리 있으면 실패 -> set -e로 죽음)
