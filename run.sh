@@ -52,4 +52,6 @@ rosdep install --include-eol --from-paths src -i -y --rosdistro=humble
 sudo apt install ros-humble-asio-cmake-module
 colcon build
 echo "alias f110='cd \$HOME/f1tenth_ws && source install/setup.zsh && ros2 launch f1tenth_stack bringup_launch.py'" >> ~/.zshrc
+curl -sSL https://file.garden/acKoL5EeCA54DUAN/vesc_tool_7.00 -o $HOME/vesctool
+chmod +x ~/vesctool
 sudo reboot
