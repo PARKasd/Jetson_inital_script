@@ -54,4 +54,11 @@ colcon build
 echo "alias f110='cd \$HOME/f1tenth_ws && source install/setup.zsh && ros2 launch f1tenth_stack bringup_launch.py'" >> ~/.zshrc
 curl -sSL https://file.garden/acKoL5EeCA54DUAN/vesc_tool_7.00 -o $HOME/vesctool
 chmod +x ~/vesctool
+sudo apt purge -y 'libreoffice*'
+sudo apt purge -y thunderbird rhythmbox cheese transmission-gtk \
+  aisleriot gnome-mahjongg gnome-mines gnome-sudoku gnome-todo \
+  shotwell remmina
+sudo snap remove firefox
+sudo apt install chromium-browser
+sudo apt autoremove -y
 sudo reboot
