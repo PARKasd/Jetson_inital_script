@@ -14,6 +14,17 @@ trap 'kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true' EXIT
 
 PLUGINS_DIR="$HOME/.oh-my-zsh/plugins"
 
+### 0.5 Jetson 파워 프로파일 최대 ################################
+# nvpmodel -m 2 = MAXN(이 보드 기준), jetson_clocks = 클럭 최대 고정
+# 빌드도 최대 성능으로 -> colcon build 시간 단축. Jetson 아니면 스킵.
+if command -v nvpmodel >/dev/null 2>&1; then
+  sudo nvpmodel -m 2 || echo "WARN: nvpmodel -m 2 실패 (보드별 최대 모드 번호 확인: sudo nvpmodel -q)"
+  sudo jetson_clocks || echo "WARN: jetson_clocks 실패"
+  echo "Jetson power profile -> MAXN + jetson_clocks"
+else
+  echo "nvpmodel 없음 -> Jetson 파워 프로파일 스킵"
+fi
+
 ### 1. base packages #############################################
 sudo apt update && sudo apt upgrade -y
 sudo apt install -y \
@@ -37,14 +48,28 @@ RUNZSH=no CHSH=no sh -c \
   "" --unattended
 
 ### 3. zsh plugins ###############################################
-git clone https://github.com/zsh-users/zsh-syntax-highlighting.git "$PLUGINS_DIR/zsh-syntax-highlighting"
-git clone https://github.com/zsh-users/zsh-autosuggestions.git      "$PLUGINS_DIR/zsh-autosuggestions"
+# 재실행 대비: 이미 있으면 clone 스킵 (git clone은 디렉토리 있으면 실패 -> set -e로 죽음)
+[ -d "$PLUGINS_DIR/zsh-syntax-highlighting" ] || \
+  git clone https://github.com/zsh-users/zsh-syntax-highlighting.git "$PLUGINS_DIR/zsh-syntax-highlighting"
+[ -d "$PLUGINS_DIR/zsh-autosuggestions" ] || \
+  git clone https://github.com/zsh-users/zsh-autosuggestions.git "$PLUGINS_DIR/zsh-autosuggestions"
 
 # 절대경로로 source (bash에서 실행되므로 ${(q-)PWD} 같은 zsh 확장 금지)
-{
-  echo "source $PLUGINS_DIR/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
-  echo "source $PLUGINS_DIR/zsh-autosuggestions/zsh-autosuggestions.zsh"
-} >> "$HOME/.zshrc"
+# grep 가드로 중복 append 방지 (재실행 안전)
+grep -qF "zsh-syntax-highlighting.zsh" "$HOME/.zshrc" || \
+  echo "source $PLUGINS_DIR/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" >> "$HOME/.zshrc"
+grep -qF "zsh-autosuggestions.zsh" "$HOME/.zshrc" || \
+  echo "source $PLUGINS_DIR/zsh-autosuggestions/zsh-autosuggestions.zsh" >> "$HOME/.zshrc"
+
+### 3.5 default shell -> zsh #####################################
+# 이 시점에 zsh/oh-my-zsh/plugins/.zshrc 다 준비됨.
+# 뒤쪽 colcon build/외부 다운로드가 실패해도 zsh 환경은 확정되도록 여기서 처리.
+ZSH_BIN="$(command -v zsh)"
+# chsh는 대상 셸이 /etc/shells 에 있어야 동작 -> 없으면 추가
+grep -qxF "$ZSH_BIN" /etc/shells || echo "$ZSH_BIN" | sudo tee -a /etc/shells > /dev/null
+# 기본 로그인 셸 변경 (chsh 실패 시 usermod 폴백)
+sudo chsh -s "$ZSH_BIN" "$USER" || sudo usermod -s "$ZSH_BIN" "$USER"
+echo "default shell -> $ZSH_BIN (다음 로그인부터 적용)"
 
 ### 4. locale ####################################################
 sudo locale-gen en_US en_US.UTF-8
@@ -67,8 +92,12 @@ sudo apt install -y ros-humble-desktop ros-humble-ros-base ros-dev-tools
 } >> "$HOME/.zshrc"
 
 # 이 bash 세션에서 이후 colcon/rosdep 쓰려면 bash용 setup 을 source
+# ROS setup 스크립트는 set -u 안전하지 않음(AMENT_TRACE_SETUP_FILES 등 unbound 참조)
+# -> source 동안만 nounset 끔
+set +u
 # shellcheck disable=SC1091
 source /opt/ros/humble/setup.bash
+set -u
 
 ### 6. dev / lint deps ###########################################
 sudo apt install -y python3-pip python3-pytest-cov ros-dev-tools
@@ -133,10 +162,7 @@ sudo snap remove firefox           # snap remove 엔 -y 없음
 sudo apt install -y chromium-browser
 sudo apt autoremove -y
 
-### 12. default shell -> zsh (non-interactive) ##################
-sudo chsh -s "$(which zsh)" "$USER"
-
-### 13. reboot ##################################################
+### 12. reboot ##################################################
 echo "==== 셋업 완료. 5초 후 리부트 ===="
 sleep 5
 sudo reboot
