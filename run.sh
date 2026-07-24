@@ -19,6 +19,7 @@ trap 'kill "$KEEPALIVE_PID" 2>/dev/null || true' EXIT
 WS="${WS:-$HOME/f1tenth_ws}"
 PKG_DIR="$WS/src/f1tenth_system"
 REPO="${REPO:-https://github.com/2026-AI-Boot-Camp/f1tenth_system.git}"
+BRANCH="${BRANCH:-hyu}"
 
 XKB_FILE="/usr/share/X11/xkb/keycodes/evdev"
 XKB_MODEL="${XKB_MODEL:-pc104}"
@@ -140,7 +141,9 @@ rm -rf "$WS/build" "$WS/install" "$WS/log"
 
 ### 3.2 새로 clone + submodule ###################################
 cd "$WS/src"
-git clone "$REPO" f1tenth_system
+# 기본 브랜치가 아니라 hyu 브랜치를 받아야 함
+git clone -b "$BRANCH" "$REPO" f1tenth_system \
+  || { echo "WARN: '$BRANCH' 브랜치 clone 실패 -> 기본 브랜치로"; git clone "$REPO" f1tenth_system; }
 cd f1tenth_system
 git submodule update --init --recursive --remote
 
