@@ -254,8 +254,8 @@ sudo rosdep init 2>/dev/null || true
 rosdep update --include-eol --rosdistro=humble
 rosdep install --include-eol --from-paths src -i -y --rosdistro=humble
 sudo apt install -y ros-humble-asio-cmake-module
-colcon build
-
+colcon build --symlink-install
+rm -rf run.sh zshtobash.sh
 echo ""
 echo "==== 완료 ===="
 echo "새 터미널을 열거나 'exec bash -l' 로 bash 환경 적용"
