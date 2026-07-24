@@ -152,10 +152,8 @@ mkdir -p "$WS/src"
 ### 3.2 새로 clone + submodule ###################################
 cd "$WS/src"
 # 기본 브랜치가 아니라 hyu 브랜치를 받아야 함
-git clone -b "$BRANCH" "$REPO" f1tenth_system \
-  || { echo "WARN: '$BRANCH' 브랜치 clone 실패 -> 기본 브랜치로"; git clone "$REPO" f1tenth_system; }
+git clone "$REPO" f1tenth_system
 cd f1tenth_system
-git submodule update --init --recursive --remote
 
 ### 3.3 rosdep + 빌드 ############################################
 set +u
