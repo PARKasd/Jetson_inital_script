@@ -132,12 +132,14 @@ echo ""
 echo "=== 3. f1tenth_system 재설치 + 클린 빌드 ==="
 
 ### 3.1 기존 소스/빌드 산출물 제거 ###############################
+# WS 가 빈 문자열/루트면 rm -rf 가 엉뚱한 곳을 지우므로 여기서만 막음
+case "$WS" in
+  /|"") echo "ERROR: WS='$WS' 비정상 -> 중단"; exit 1 ;;
+esac
+
+echo "삭제: $PKG_DIR, $WS/{build,install,log}"
+rm -rf "$PKG_DIR" "$WS/build" "$WS/install" "$WS/log"
 mkdir -p "$WS/src"
-if [ -d "$PKG_DIR" ]; then
-  echo "기존 f1tenth_system 삭제..."
-  rm -rf "$PKG_DIR"
-fi
-rm -rf "$WS/build" "$WS/install" "$WS/log"
 
 ### 3.2 새로 clone + submodule ###################################
 cd "$WS/src"
