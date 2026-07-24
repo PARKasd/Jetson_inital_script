@@ -1,173 +1,166 @@
 #!/usr/bin/env bash
 #
-# F1TENTH 환경 셋업 (Ubuntu 22.04 / ROS2 Humble)
-# 실행: bash setup.sh      <- sudo 붙이지 말 것 (workspace root 소유 방지)
+# 1) 키보드 레이아웃 롤백: kr104(101/104 호환) -> 기본 kr / pc104
+#    - evdev 키코드 패치했다면 원본 복구
+# 2) Chromium 을 GNOME 즐겨찾기(dash)에 등록
+# 3) f1tenth_system 통째로 지우고 재clone + 클린 빌드
+#
+# 실행: bash kbd_rollback_and_chromium.sh   <- sudo 붙이지 말 것
+#       WS=~/다른워크스페이스 bash ...
 #
 set -euo pipefail
 
-### 0. sudo keep-alive ###########################################
-# 앞에서 한 번 인증, 백그라운드로 timestamp 갱신 -> 뒤쪽 apt purge 등에서 재입력 방지
+### sudo keep-alive ##############################################
 sudo -v
 ( while true; do sudo -n true; sleep 60; kill -0 "$$" 2>/dev/null || exit; done ) &
-SUDO_KEEPALIVE_PID=$!
-trap 'kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true' EXIT
+KEEPALIVE_PID=$!
+trap 'kill "$KEEPALIVE_PID" 2>/dev/null || true' EXIT
 
-PLUGINS_DIR="$HOME/.oh-my-zsh/plugins"
+WS="${WS:-$HOME/f1tenth_ws}"
+PKG_DIR="$WS/src/f1tenth_system"
+REPO="${REPO:-https://github.com/2026-AI-Boot-Camp/f1tenth_system.git}"
 
-### 0.5 Jetson 파워 프로파일 최대 ################################
-# nvpmodel -m 2 = MAXN(이 보드 기준), jetson_clocks = 클럭 최대 고정
-# 빌드도 최대 성능으로 -> colcon build 시간 단축. Jetson 아니면 스킵.
-if command -v nvpmodel >/dev/null 2>&1; then
-  sudo nvpmodel -m 2 || echo "WARN: nvpmodel -m 2 실패 (보드별 최대 모드 번호 확인: sudo nvpmodel -q)"
-  sudo jetson_clocks || echo "WARN: jetson_clocks 실패"
-  echo "Jetson power profile -> MAXN + jetson_clocks"
+XKB_FILE="/usr/share/X11/xkb/keycodes/evdev"
+XKB_MODEL="${XKB_MODEL:-pc104}"
+XKB_LAYOUT="kr"
+XKB_VARIANT=""          # kr104 안 씀 -> 빈 값
+
+echo "=== 1. 키보드 레이아웃 롤백 ==="
+
+### 1.1 evdev 패치 원본 복구 #####################################
+if [ -f "$XKB_FILE.orig" ]; then
+  if ! cmp -s "$XKB_FILE.orig" "$XKB_FILE"; then
+    sudo cp "$XKB_FILE.orig" "$XKB_FILE"
+    echo "evdev 원본 복구 완료"
+  else
+    echo "evdev 이미 원본 상태 -> 스킵"
+  fi
 else
-  echo "nvpmodel 없음 -> Jetson 파워 프로파일 스킵"
+  echo "evdev 백업 없음 -> 패치 안 했던 것으로 간주"
 fi
 
-### 1. base packages #############################################
-sudo apt update && sudo apt upgrade -y
-sudo apt install -y \
-  zsh curl nano git dkms python-is-python3 terminator \
-  locales software-properties-common
+# xkb 컴파일 캐시 삭제 (안 지우면 옛 키맵 계속 사용됨)
+sudo rm -rf /var/lib/xkb/* 2>/dev/null || true
 
-# kernel headers (Jetson/Tegra 대응)
-# Tegra 커널 헤더는 일반 ubuntu 저장소에 없음(=linux-headers-*-tegra). 보통 L4T에 이미 있음.
-# 있으면 스킵, 없으면 L4T 헤더 시도, 그래도 없으면 경고만 (xpad DKMS optional)
-if [ ! -d "/lib/modules/$(uname -r)/build" ]; then
-  sudo apt install -y nvidia-l4t-kernel-headers 2>/dev/null \
-    || sudo apt install -y "linux-headers-$(uname -r)" 2>/dev/null \
-    || echo "WARN: 커널 헤더 못 찾음 -> xpad DKMS 스킵될 수 있음"
-fi
-
-### 2. oh-my-zsh (unattended) ####################################
-# RUNZSH=no  -> 설치 끝에 exec zsh 안 함 (스크립트 안 멈춤)
-# CHSH=no    -> 여기서 default shell 안 바꿈 (아래 3.5에서 처리)
-# 이미 설치돼있으면 인스톨러가 non-zero 종료 -> set -e로 죽으므로 스킵
-if [ ! -d "$HOME/.oh-my-zsh" ]; then
-  RUNZSH=no CHSH=no sh -c \
-    "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" \
-    "" --unattended
+### 1.2 시스템 전역 X11 키맵 -> kr / pc104 / (variant 없음) ######
+if command -v localectl >/dev/null 2>&1; then
+  sudo localectl set-x11-keymap "$XKB_LAYOUT" "$XKB_MODEL" "$XKB_VARIANT" \
+    || echo "WARN: set-x11-keymap 실패"
+  echo "X11 keymap -> $XKB_LAYOUT / $XKB_MODEL / (variant 없음)"
+  localectl status 2>/dev/null | grep -i -E "X11|VC" || true
 else
-  echo "oh-my-zsh 이미 설치됨 -> 스킵"
+  sudo sed -i \
+    -e "s|^XKBLAYOUT=.*|XKBLAYOUT=\"$XKB_LAYOUT\"|" \
+    -e "s|^XKBMODEL=.*|XKBMODEL=\"$XKB_MODEL\"|" \
+    -e "s|^XKBVARIANT=.*|XKBVARIANT=\"\"|" \
+    /etc/default/keyboard || echo "WARN: /etc/default/keyboard 수정 실패"
+  echo "/etc/default/keyboard 직접 수정 완료"
 fi
 
-### 3. zsh plugins ###############################################
-# 재실행 대비: 이미 있으면 clone 스킵 (git clone은 디렉토리 있으면 실패 -> set -e로 죽음)
-[ -d "$PLUGINS_DIR/zsh-syntax-highlighting" ] || \
-  git clone https://github.com/zsh-users/zsh-syntax-highlighting.git "$PLUGINS_DIR/zsh-syntax-highlighting"
-[ -d "$PLUGINS_DIR/zsh-autosuggestions" ] || \
-  git clone https://github.com/zsh-users/zsh-autosuggestions.git "$PLUGINS_DIR/zsh-autosuggestions"
+### 1.3 GUI 세션 설정 (input-sources / 즐겨찾기) #################
+if [ -S "/run/user/$(id -u)/bus" ]; then
+  export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
+  GUI_OK=1
+else
+  GUI_OK=0
+  echo "WARN: GUI 세션 아님(SSH?) -> gsettings 항목은 데스크톱 로그인 후 재실행 필요"
+fi
 
-# 절대경로로 source (bash에서 실행되므로 ${(q-)PWD} 같은 zsh 확장 금지)
-# grep 가드로 중복 append 방지 (재실행 안전)
-grep -qF "zsh-syntax-highlighting.zsh" "$HOME/.zshrc" || \
-  echo "source $PLUGINS_DIR/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" >> "$HOME/.zshrc"
-grep -qF "zsh-autosuggestions.zsh" "$HOME/.zshrc" || \
-  echo "source $PLUGINS_DIR/zsh-autosuggestions/zsh-autosuggestions.zsh" >> "$HOME/.zshrc"
+if [ "$GUI_OK" = "1" ]; then
+  # kr+kr104 -> kr 로 롤백
+  gsettings set org.gnome.desktop.input-sources sources \
+    "[('xkb','kr'),('ibus','hangul')]" 2>/dev/null \
+    || echo "WARN: input-sources 설정 실패"
+  gsettings set org.freedesktop.ibus.engine.hangul switch-keys 'Hangul' 2>/dev/null \
+    || echo "WARN: switch-keys 설정 실패"
+  echo "input-sources -> [('xkb','kr'),('ibus','hangul')]"
+fi
 
-### 3.5 default shell -> zsh #####################################
-# 이 시점에 zsh/oh-my-zsh/plugins/.zshrc 다 준비됨.
-# 뒤쪽 colcon build/외부 다운로드가 실패해도 zsh 환경은 확정되도록 여기서 처리.
-ZSH_BIN="$(command -v zsh)"
-# chsh는 대상 셸이 /etc/shells 에 있어야 동작 -> 없으면 추가
-grep -qxF "$ZSH_BIN" /etc/shells || echo "$ZSH_BIN" | sudo tee -a /etc/shells > /dev/null
-# 기본 로그인 셸 변경 (chsh 실패 시 usermod 폴백)
-sudo chsh -s "$ZSH_BIN" "$USER" || sudo usermod -s "$ZSH_BIN" "$USER"
-echo "default shell -> $ZSH_BIN (다음 로그인부터 적용)"
+echo ""
+echo "=== 2. Chromium 즐겨찾기 등록 ==="
 
-### 4. locale ####################################################
-sudo locale-gen en_US en_US.UTF-8
-sudo update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
-export LANG=en_US.UTF-8
+### 2.1 chromium 설치 확인 (없으면 설치) #########################
+if ! command -v chromium >/dev/null 2>&1 && ! command -v chromium-browser >/dev/null 2>&1; then
+  echo "chromium 없음 -> 설치 시도"
+  sudo apt install -y chromium-browser || sudo apt install -y chromium \
+    || echo "WARN: chromium 설치 실패 (수동 설치 필요)"
+fi
 
-### 5. ROS2 Humble ###############################################
-sudo add-apt-repository universe -y
-sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
-  -o /usr/share/keyrings/ros-archive-keyring.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo "$UBUNTU_CODENAME") main" \
-  | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
-sudo apt update
-sudo apt install -y ros-humble-desktop ros-humble-ros-base ros-dev-tools
+### 2.2 .desktop 파일 탐색 (snap/apt 이름이 다름) ################
+DESKTOP_ID=""
+for cand in chromium_chromium.desktop chromium-browser.desktop chromium.desktop; do
+  for dir in /var/lib/snapd/desktop/applications /usr/share/applications "$HOME/.local/share/applications"; do
+    if [ -f "$dir/$cand" ]; then
+      DESKTOP_ID="$cand"
+      break 2
+    fi
+  done
+done
 
-{
-  echo "source /opt/ros/humble/setup.zsh"
-  echo "alias cb='colcon build --symlink-install'"
-  echo "alias sc='source install/setup.zsh'"
-} >> "$HOME/.zshrc"
+if [ -z "$DESKTOP_ID" ]; then
+  echo "WARN: chromium .desktop 파일을 못 찾음 -> 즐겨찾기 등록 스킵"
+  echo "      확인: ls /usr/share/applications | grep -i chrom"
+elif [ "$GUI_OK" != "1" ]; then
+  echo "WARN: GUI 세션 아님 -> 즐겨찾기 등록 스킵 ($DESKTOP_ID)"
+else
+  ### 2.3 favorite-apps 배열에 append (중복 방지) ################
+  CUR="$(gsettings get org.gnome.shell favorite-apps 2>/dev/null || echo "@as []")"
+  NEW="$(python3 - "$CUR" "$DESKTOP_ID" <<'PYEOF'
+import ast, sys
+cur, item = sys.argv[1].strip(), sys.argv[2]
+if cur.startswith('@as'):
+    cur = cur[3:].strip()
+try:
+    lst = ast.literal_eval(cur)
+except Exception:
+    lst = []
+if not isinstance(lst, list):
+    lst = []
+if item not in lst:
+    lst.append(item)
+print("[" + ", ".join("'%s'" % x for x in lst) + "]")
+PYEOF
+)"
+  gsettings set org.gnome.shell favorite-apps "$NEW" \
+    && echo "즐겨찾기 등록 완료: $DESKTOP_ID" \
+    || echo "WARN: favorite-apps 설정 실패"
+  gsettings get org.gnome.shell favorite-apps
+fi
 
-# 이 bash 세션에서 이후 colcon/rosdep 쓰려면 bash용 setup 을 source
-# ROS setup 스크립트는 set -u 안전하지 않음(AMENT_TRACE_SETUP_FILES 등 unbound 참조)
-# -> source 동안만 nounset 끔
+echo ""
+echo "=== 3. f1tenth_system 재설치 + 클린 빌드 ==="
+
+### 3.1 기존 소스/빌드 산출물 제거 ###############################
+mkdir -p "$WS/src"
+if [ -d "$PKG_DIR" ]; then
+  echo "기존 f1tenth_system 삭제..."
+  rm -rf "$PKG_DIR"
+fi
+rm -rf "$WS/build" "$WS/install" "$WS/log"
+
+### 3.2 새로 clone + submodule ###################################
+cd "$WS/src"
+git clone "$REPO" f1tenth_system
+cd f1tenth_system
+git submodule update --init --recursive --remote
+
+### 3.3 rosdep + 빌드 ############################################
 set +u
 # shellcheck disable=SC1091
 source /opt/ros/humble/setup.bash
 set -u
 
-### 6. dev / lint deps ###########################################
-sudo apt install -y python3-pip python3-pytest-cov ros-dev-tools
-python3 -m pip install -U \
-  flake8-blind-except flake8-builtins flake8-class-newline \
-  flake8-comprehensions flake8-deprecated flake8-docstrings \
-  flake8-import-order flake8-quotes \
-  pytest-repeat pytest-rerunfailures pytest setuptools
-sudo apt install -y python3-colcon-common-extensions
-
-### 7. xpad (F710 XInput / Xbox 패드) DKMS #######################
-# 헤더 없으면 빌드 실패하므로 non-fatal 처리 (|| true)
-if [ -d "/lib/modules/$(uname -r)/build" ]; then
-  if [ ! -d /usr/src/xpad-0.4 ]; then
-    sudo git clone https://github.com/paroj/xpad.git /usr/src/xpad-0.4
-  fi
-  sudo dkms install -m xpad -v 0.4 || echo "WARN: xpad DKMS 실패 -> 헤더/커널 확인 필요"
-else
-  echo "WARN: 커널 헤더 없음 -> xpad DKMS 스킵"
-fi
-
-### 8. udev rules (Hokuyo / VESC / F710) #########################
-# 'sudo echo' 은 무의미(리다이렉트는 유저 셸에서 실행) -> tee 만 sudo
-echo 'KERNEL=="ttyACM[0-9]*", ACTION=="add", ATTRS{idVendor}=="15d1", MODE="0666", GROUP="dialout", SYMLINK+="sensors/hokuyo"' \
-  | sudo tee /etc/udev/rules.d/99-hokuyo.rules > /dev/null
-echo 'KERNEL=="ttyACM[0-9]*", ACTION=="add", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", MODE="0666", GROUP="dialout", SYMLINK+="sensors/vesc"' \
-  | sudo tee /etc/udev/rules.d/99-vesc.rules > /dev/null
-echo 'KERNEL=="js[0-9]*", ACTION=="add", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c219", SYMLINK+="input/joypad-f710"' \
-  | sudo tee /etc/udev/rules.d/99-joypad-f710.rules > /dev/null
-sudo udevadm control --reload-rules && sudo udevadm trigger
-
-### 9. f1tenth_system workspace ##################################
-mkdir -p "$HOME/f1tenth_ws/src"
-cd "$HOME/f1tenth_ws/src"
-if [ ! -d f1tenth_system ]; then
-  git clone --branch humble-devel https://github.com/f1tenth/f1tenth_system.git
-fi
-cd f1tenth_system
-git submodule update --init --recursive --remote
-
-cd "$HOME/f1tenth_ws"
-# rosdep init 최초 1회 (이미 되어있으면 무시)
+cd "$WS"
 sudo rosdep init 2>/dev/null || true
-rosdep update --include-eol --rosdistro=humble
-rosdep install --include-eol --from-paths src -i -y --rosdistro=humble
+rosdep update --include-eol --rosdistro=humble || echo "WARN: rosdep update 실패"
+rosdep install --include-eol --from-paths src -i -y --rosdistro=humble \
+  || echo "WARN: rosdep install 일부 실패"
 sudo apt install -y ros-humble-asio-cmake-module
-colcon build
+colcon build --symlink-install
+echo "빌드 완료: $WS"
 
-echo "alias f110='cd \$HOME/f1tenth_ws && source install/setup.zsh && ros2 launch f1tenth_stack bringup_launch.py'" >> "$HOME/.zshrc"
-
-### 10. vesc_tool ################################################
-# 주의: file.garden 외부 호스팅. 죽으면 여기서 실패하니 신뢰성 필요하면 미러 권장.
-curl -fsSL https://file.garden/acKoL5EeCA54DUAN/vesc_tool_7.00 -o "$HOME/vesctool"
-chmod +x "$HOME/vesctool"
-
-### 11. bloat 제거 ###############################################
-sudo apt purge -y 'libreoffice*'
-sudo apt purge -y thunderbird rhythmbox cheese transmission-gtk \
-  aisleriot gnome-mahjongg gnome-mines gnome-sudoku gnome-todo \
-  shotwell remmina
-sudo snap remove firefox           # snap remove 엔 -y 없음
-sudo apt install -y chromium-browser
-sudo apt autoremove -y
-
-### 12. reboot ##################################################
-echo "==== 셋업 완료. 5초 후 리부트 ===="
-sleep 5
-sudo reboot
+echo ""
+echo "==== 완료 ===="
+echo "키맵은 로그아웃/재로그인(또는 재부팅) 후 완전 적용"
+echo "확인: localectl status | grep -i x11"
+echo "워크스페이스: source $WS/install/setup.bash"
