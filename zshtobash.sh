@@ -98,6 +98,8 @@ fi
 
 ### 0.8 한글 입력 + 한영키 설정 ##################################
 sudo apt install -y ibus-hangul
+sudo apt install ros-humble-joy-linux -y
+
 
 # kr104 변형이 우측 alt -> Hangul, 우측 ctrl -> 한자 를 심볼 레벨에서 처리하므로
 # evdev 키코드 패치는 기본 비활성. 필요하면 PATCH_EVDEV=1 로 실행.
