@@ -137,8 +137,16 @@ case "$WS" in
   /|"") echo "ERROR: WS='$WS' 비정상 -> 중단"; exit 1 ;;
 esac
 
-echo "삭제: $PKG_DIR, $WS/{build,install,log}"
+echo "삭제: $PKG_DIR (.git 포함), $WS/{build,install,log}"
 rm -rf "$PKG_DIR" "$WS/build" "$WS/install" "$WS/log"
+
+# root 소유 파일이 섞여 있으면 위 rm 이 조용히 실패할 수 있음 -> sudo 로 재시도
+if [ -e "$PKG_DIR" ]; then
+  echo "WARN: $PKG_DIR 잔존 -> sudo 로 재삭제"
+  sudo rm -rf "$PKG_DIR"
+fi
+[ -e "$PKG_DIR" ] && { echo "ERROR: $PKG_DIR 삭제 실패 -> 중단"; exit 1; }
+
 mkdir -p "$WS/src"
 
 ### 3.2 새로 clone + submodule ###################################
