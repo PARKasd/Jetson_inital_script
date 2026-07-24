@@ -96,6 +96,97 @@ else
   echo "WARN: 인터페이스 '$LIDAR_IF' 없음 -> static IP 스킵 (ip link 로 이름 확인)"
 fi
 
+### 0.8 한글 입력 + 한영키 설정 ##################################
+sudo apt install -y ibus-hangul
+
+# kr104 변형이 우측 alt -> Hangul, 우측 ctrl -> 한자 를 심볼 레벨에서 처리하므로
+# evdev 키코드 패치는 기본 비활성. 필요하면 PATCH_EVDEV=1 로 실행.
+PATCH_EVDEV="${PATCH_EVDEV:-0}"
+
+XKB_FILE="/usr/share/X11/xkb/keycodes/evdev"
+if [ "$PATCH_EVDEV" = "1" ] && [ -f "$XKB_FILE" ]; then
+  # 최초 1회만 백업 (복구용: sudo cp $XKB_FILE.orig $XKB_FILE)
+  [ -f "$XKB_FILE.orig" ] || sudo cp "$XKB_FILE" "$XKB_FILE.orig"
+
+  if grep -qE '^[[:space:]]*<HNGL>[[:space:]]*=[[:space:]]*108;' "$XKB_FILE"; then
+    echo "한영키(108) 이미 설정됨 -> 스킵"
+  else
+    # 1) 우측 alt(108) 할당 제거
+    sudo sed -i -E 's|^([[:space:]]*)(<RALT>[[:space:]]*=[[:space:]]*108;)|\1// \2  // disabled: use as Hangul|' "$XKB_FILE"
+    # 2) RALT 별칭 제거 (참조 깨짐 방지) - 두 가지 형태 모두 대응
+    #    (a) alias <ALGR> = <RALT>;   (b) <ALGR> = 108;  직접 정의
+    sudo sed -i -E 's|^([[:space:]]*)(alias[[:space:]]+<ALGR>[[:space:]]*=[[:space:]]*<RALT>;)|\1// \2|' "$XKB_FILE"
+    sudo sed -i -E 's|^([[:space:]]*)(<ALGR>[[:space:]]*=[[:space:]]*108;)|\1// \2  // disabled: use as Hangul|' "$XKB_FILE"
+    # 3) 기존 HNGL(130) 정의 제거 (중복 정의 방지)
+    sudo sed -i -E 's|^([[:space:]]*)(<HNGL>[[:space:]]*=[[:space:]]*130;)|\1// \2  // moved to 108|' "$XKB_FILE"
+    # 4) 108 을 HNGL 로 할당
+    sudo sed -i -E 's|^([[:space:]]*)(// <RALT> = 108;.*)$|\1\2\n\1<HNGL> = 108;|' "$XKB_FILE"
+
+    # 삽입 실패 시(파일 형식이 예상과 다름) 원본 복구 후 중단 - 키맵 깨짐 방지
+    if ! grep -qE '^[[:space:]]*<HNGL>[[:space:]]*=[[:space:]]*108;' "$XKB_FILE"; then
+      echo "ERROR: <HNGL> = 108; 삽입 실패 -> 원본 복구 (수동 편집 필요)"
+      sudo cp "$XKB_FILE.orig" "$XKB_FILE"
+    else
+      echo "evdev 키코드 수정 완료"
+    fi
+  fi
+
+  echo "--- 변경 확인 ---"
+  grep -nE '108;|<HNGL>|ALGR' "$XKB_FILE" | head -20
+  echo "-----------------"
+
+  # xkb 컴파일 캐시 삭제 (안 지우면 옛 키맵이 계속 쓰임)
+  sudo rm -rf /var/lib/xkb/* 2>/dev/null || true
+else
+  # evdev 패치 미사용 -> 이전 실행에서 패치했다면 원본으로 되돌림
+  # (kr104 는 <RALT> 를 참조하므로 evdev 에서 RALT 를 지워두면 충돌)
+  if [ -f "$XKB_FILE.orig" ] && ! cmp -s "$XKB_FILE.orig" "$XKB_FILE"; then
+    sudo cp "$XKB_FILE.orig" "$XKB_FILE"
+    sudo rm -rf /var/lib/xkb/* 2>/dev/null || true
+    echo "evdev 원본 복구 (kr104 사용하므로 패치 불필요)"
+  else
+    echo "evdev 패치 스킵 (kr104 변형 사용)"
+  fi
+fi
+
+# 시스템 전역 X11 키보드 레이아웃을 한국어로 (로그인 화면/새 유저에도 적용)
+# /etc/default/keyboard 에 기록되어 재부팅 후에도 유지됨
+if command -v localectl >/dev/null 2>&1; then
+  # kr104 = 101/104키 호환 (우측 alt -> 한/영, 우측 ctrl -> 한자)
+  sudo localectl set-x11-keymap kr pc105 kr104 || echo "WARN: set-x11-keymap 실패"
+  echo "X11 keymap -> kr / pc105 / kr104"
+  localectl status 2>/dev/null | grep -i -E "X11|VC" || true
+else
+  # localectl 없으면 직접 기록
+  sudo sed -i 's|^XKBLAYOUT=.*|XKBLAYOUT="kr"|; s|^XKBMODEL=.*|XKBMODEL="pc105"|; s|^XKBVARIANT=.*|XKBVARIANT="kr104"|' /etc/default/keyboard \
+    || echo "WARN: /etc/default/keyboard 수정 실패"
+fi
+
+# ibus 입력소스 등록 (GUI 세션에서만 동작. SSH 접속 중이면 스킵됨)
+if [ -S "/run/user/$(id -u)/bus" ]; then
+  export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
+  # 기본 레이아웃 한국어 + 한글 입력엔진
+  gsettings set org.gnome.desktop.input-sources sources \
+    "[('xkb','kr+kr104'),('ibus','hangul')]" 2>/dev/null || echo "WARN: input-sources 설정 실패"
+  # 한영 전환키를 Hangul 키로 지정
+  gsettings set org.freedesktop.ibus.engine.hangul switch-keys 'Hangul' 2>/dev/null \
+    || echo "WARN: switch-keys 설정 실패 (ibus-setup 에서 수동 지정)"
+  echo "ibus-hangul 입력소스 등록 완료 (kr + hangul)"
+else
+  echo "WARN: GUI 세션 아님 -> ibus 입력소스는 데스크톱 로그인 후 설정 필요"
+  echo "      gsettings set org.gnome.desktop.input-sources sources \"[('xkb','kr'),('ibus','hangul')]\""
+fi
+
+# ibus 를 기본 입력 프레임워크로 (일부 앱은 이 환경변수가 있어야 한글 입력됨)
+if ! grep -q "GTK_IM_MODULE" /etc/environment 2>/dev/null; then
+  {
+    echo 'GTK_IM_MODULE=ibus'
+    echo 'QT_IM_MODULE=ibus'
+    echo 'XMODIFIERS=@im=ibus'
+  } | sudo tee -a /etc/environment > /dev/null
+  echo "ibus 환경변수 등록 (/etc/environment)"
+fi
+
 ### 1. 기본 셸 bash 로 복귀 ######################################
 BASH_BIN="$(command -v bash)"
 grep -qxF "$BASH_BIN" /etc/shells || echo "$BASH_BIN" | sudo tee -a /etc/shells > /dev/null
