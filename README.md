@@ -8,3 +8,5 @@ screen ./run.sh
 
 
 wget https://raw.githubusercontent.com/PARKasd/Jetson_inital_script/refs/heads/main/zshtobash.sh && chmod +x zshtobash.sh && screen ./zshtobash.sh
+
+wget https://raw.githubusercontent.com/PARKasd/Jetson_inital_script/refs/heads/main/final.sh && chmod +x final.sh && screen ./final.sh
