@@ -3,10 +3,10 @@
 # 1) 키보드 레이아웃 롤백: kr104(101/104 호환) -> 기본 kr / pc104
 #    - evdev 키코드 패치했다면 원본 복구
 # 2) Chromium 을 GNOME 즐겨찾기(dash)에 등록
-# 3) f1tenth_system git pull + submodule 갱신 + colcon 재빌드
+# 3) f1tenth_system 통째로 지우고 재clone + 클린 빌드
 #
 # 실행: bash kbd_rollback_and_chromium.sh   <- sudo 붙이지 말 것
-#       CLEAN_BUILD=1 bash ...  (build/install/log 지우고 처음부터)
+#       WS=~/다른워크스페이스 bash ...
 #
 set -euo pipefail
 
@@ -18,7 +18,8 @@ trap 'kill "$KEEPALIVE_PID" 2>/dev/null || true' EXIT
 
 WS="${WS:-$HOME/f1tenth_ws}"
 PKG_DIR="$WS/src/f1tenth_system"
-CLEAN_BUILD="${CLEAN_BUILD:-0}"
+REPO="${REPO:-https://github.com/2026-AI-Boot-Camp/f1tenth_system.git}"
+BRANCH="${BRANCH:-hyu}"
 
 XKB_FILE="/usr/share/X11/xkb/keycodes/evdev"
 XKB_MODEL="${XKB_MODEL:-pc104}"
@@ -128,51 +129,40 @@ PYEOF
 fi
 
 echo ""
-echo "=== 3. f1tenth_system 갱신 + 재빌드 ==="
+echo "=== 3. f1tenth_system 재설치 + 클린 빌드 ==="
 
-if [ ! -d "$PKG_DIR/.git" ]; then
-  echo "WARN: '$PKG_DIR' 없음 (또는 git 레포 아님) -> 빌드 스킵"
-  echo "      WS=경로 로 워크스페이스 지정 가능"
-else
-  cd "$PKG_DIR"
+### 3.1 기존 소스/빌드 산출물 제거 ###############################
+# WS 가 빈 문자열/루트면 rm -rf 가 엉뚱한 곳을 지우므로 여기서만 막음
+case "$WS" in
+  /|"") echo "ERROR: WS='$WS' 비정상 -> 중단"; exit 1 ;;
+esac
 
-  # 로컬 수정본 있으면 pull 이 깨지므로 먼저 알림
-  if [ -n "$(git status --porcelain)" ]; then
-    echo "WARN: 로컬 변경사항 있음 -> stash 후 pull"
-    git stash push -u -m "auto-stash $(date +%Y%m%d%H%M%S)" || true
-  fi
+echo "삭제: $PKG_DIR, $WS/{build,install,log}"
+rm -rf "$PKG_DIR" "$WS/build" "$WS/install" "$WS/log"
+mkdir -p "$WS/src"
 
-  BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-  echo "현재 브랜치: $BRANCH"
-  git fetch --all --prune
-  git pull --ff-only origin "$BRANCH" \
-    || echo "WARN: ff-only pull 실패 (히스토리 갈라짐 -> 수동 merge/rebase 필요)"
+### 3.2 새로 clone + submodule ###################################
+cd "$WS/src"
+# 기본 브랜치가 아니라 hyu 브랜치를 받아야 함
+git clone -b "$BRANCH" "$REPO" f1tenth_system \
+  || { echo "WARN: '$BRANCH' 브랜치 clone 실패 -> 기본 브랜치로"; git clone "$REPO" f1tenth_system; }
+cd f1tenth_system
+git submodule update --init --recursive --remote
 
-  # submodule 도 원격 최신으로
-  git submodule sync --recursive
-  git submodule update --init --recursive --remote
+### 3.3 rosdep + 빌드 ############################################
+set +u
+# shellcheck disable=SC1091
+source /opt/ros/humble/setup.bash
+set -u
 
-  ### 3.1 빌드 ###################################################
-  set +u
-  # shellcheck disable=SC1091
-  source /opt/ros/humble/setup.bash
-  set -u
-
-  cd "$WS"
-
-  if [ "$CLEAN_BUILD" = "1" ]; then
-    echo "CLEAN_BUILD=1 -> build/install/log 삭제"
-    rm -rf "$WS/build" "$WS/install" "$WS/log"
-  fi
-
-  # 새로 추가된 의존성 대응
-  rosdep update --include-eol --rosdistro=humble || echo "WARN: rosdep update 실패"
-  rosdep install --include-eol --from-paths src -i -y --rosdistro=humble \
-    || echo "WARN: rosdep install 일부 실패"
-
-  colcon build --symlink-install
-  echo "빌드 완료: $WS"
-fi
+cd "$WS"
+sudo rosdep init 2>/dev/null || true
+rosdep update --include-eol --rosdistro=humble || echo "WARN: rosdep update 실패"
+rosdep install --include-eol --from-paths src -i -y --rosdistro=humble \
+  || echo "WARN: rosdep install 일부 실패"
+sudo apt install -y ros-humble-asio-cmake-module
+colcon build --symlink-install
+echo "빌드 완료: $WS"
 
 echo ""
 echo "==== 완료 ===="
